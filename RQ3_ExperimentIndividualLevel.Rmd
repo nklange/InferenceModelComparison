@@ -1,0 +1,1896 @@
+---
+title: "Experiment- and individual-level figures"
+output: html_document
+params:
+  experiment:
+    label: "Experiment:"
+    value: AA12a
+    input: select
+    choices: [ol17_e1, WM4, RTT12, ZL8, BCH9, AVA11, AA12a, AA12b, VSCGM21a, VSCGM21b, VSCGM21c, pratte17]
+  
+---
+
+# Research question 3: Role of set size 1
+
+```{r, echo=FALSE, message =FALSE, warning = FALSE}
+# experiments: ol17_e1, WM4, RTT12, ZL8, BCH9, AVA11, AA12a, AA12b, VSCGM21a, VSCGM21b, VSCGM21c, pratte17
+experiment <- params$experiment
+```
+
+Experiment: ``r experiment``
+
+
+## Leaving out individual set sizes
+
+We will first look at the effect of leaving out individual set sizes on the in-sample fits and out-of-sample prediction of the data, and associated predictions of all models. Here, all models are fit to all (remaining) set sizes simultaneously, i.e., mean memory precision changes for individual set sizes is derived from mean memory precision for a single item. Please see the manuscript for a more detailed explanation of the approach shown here.
+
+
+```{r exp, echo=FALSE, message =FALSE, warning = FALSE}
+library("magrittr")
+library("dplyr")
+library("tibble")
+library("tidyr")
+library("RColorBrewer")
+library("ggplot2")
+library("gridExtra")
+library("grid")
+library(magick)
+library(cowplot)
+library(ungeviz)
+library("stringr")
+
+models <- c("MK_RNminus","MK_FM_RNminus","MK_P_RNminus","MK_U_RNminus",
+            "MK_RNplus","MK_FM_RNplus","MK_P_RNplus","MK_U_RNplus")
+models2 <- c("MK_U_RNminus","MK_RNminus","MK_P_RNminus",
+             "MK_FM_RNplus","MK_FM_RNminus","MK_RNplus","MK_P_RNplus","MK_U_RNplus")
+
+# Load relevant data -----------------------------------------------------------
+# Load empirical data 
+
+load("Data/ol17_prepared.rda")
+load("Data/vdb14_prepared.rda")
+load("Data/pratte17_prepared.rda")
+
+experimentfile <- bind_rows(data_ol17[data_ol17$exp == "ol17_e1",],data_vdb14,data_pratte17)  %>% 
+  rename(setsize = "set_size") 
+
+expsetsize <- sort(unique(experimentfile %>% .$setsize))
+setsizelabels <- paste("Ss",expsetsize)
+leftoutlabels <- c("Full data set fitted", paste("Left out: Ss",expsetsize))
+
+experimentfile <- experimentfile %>% 
+  filter(exp == experiment)
+
+participants <- as.character(unique(experimentfile$id))
+lengthid <- length(participants)
+uniqueSs <- unique(sort(experimentfile$setsize))
+
+experimentfile <- experimentfile %>% 
+  mutate(setsize = factor(setsize,
+                          levels = expsetsize,
+                          labels =  setsizelabels),
+         id = as.character(factor(id)),
+         Predicted = NA)
+
+
+# Aggregate files
+
+FullFitAgg <- readRDS("Fits/FitFull_agg.rds")%>% bind_rows() %>% 
+  filter(model %in% models) %>%
+  filter(exp == experiment)
+
+
+LOTrainingAgg <- readRDS("Fits/FitFull_AggLOSSO_Training.rds") %>% 
+  filter(model %in% models) %>%
+  filter(exp == experiment)
+
+LOTestAgg <- readRDS("Fits/FitFull_AggLOSSO_TestLL.rds") %>% 
+  filter(model %in% models) %>%
+  filter(exp == experiment)
+
+
+# Individual files
+
+FullFit <- readRDS("Fits/FitFull.rds")%>% 
+  filter(model %in% models) %>%
+  filter(exp == experiment)
+
+
+LOTraining <- readRDS("Fits/CVLOSzO_Trainingfits.rds")  %>% 
+  filter(model %in% models) %>%
+  filter(exp == experiment)
+
+LOTest <- readRDS("Fits/CVLOSzO_TestLL.rds") %>% 
+  filter(model %in% models) %>%
+  filter(exp == experiment)
+
+FailedSzPrediction <- unique(LOTest %>% filter(CVLL > 1e4) %>% .$id)
+
+excludeppt <-  length(FailedSzPrediction)
+
+# AICS ------------------------------------------------------------------------
+
+QuantFit <- function(Fit,LOTrain,LOHoldout,Agg,Av=F){
+  
+  
+  if(Agg){
+    breaksY <- seq(0,200,50)
+    labelsY <- c(seq(0,150,50),"...") 
+    limitsY <- 200
+    textY <- "white"
+  } else {
+    breaksY <- seq(0,20,5)
+    labelsY <- c(seq(0,15,5),"...") 
+    limitsY <- 20
+    textY <- "black"
+  }
+  
+  if(Av){
+    textY <- "black"
+  } else {
+    textY <- "white"
+  }
+  
+  leftoutnum <- c(1:8)
+  
+  missingLeftOut <- leftoutnum[!(leftoutnum %in% unique(LOTrain$leftout))]
+if(length(missingLeftOut) > 0){
+lengthmodel <-length(models)
+
+lengthmissingLeftOut<-length(missingLeftOut)
+
+expandedInd <- as_tibble(data.frame(leftout = rep(missingLeftOut,each=lengthmodel),
+                                    model = rep(models,lengthmissingLeftOut),
+                                    mAIC=NA,
+                                    lengths = NA,
+                                    deltaAIC =NA))
+
+} else {
+  expandedInd <- c()
+  
+}
+  
+DeltaAICFull <- Fit %>% 
+  group_by(id,model) %>% 
+  arrange(AIC) %>% slice(1) %>% 
+  group_by(model) %>% 
+  summarize(mAIC = mean(AIC),
+            lengths = length(AIC)) %>%  
+  mutate(deltaAIC = mAIC - min(mAIC)) %>% 
+  mutate(leftout = "Full data set fitted") %>% 
+  mutate(model = factor(model, levels = models2))
+
+DeltaAICLOSsO <- LOTrain%>% 
+  group_by(model,id,leftout) %>% 
+  mutate(AIC = objective * 2 + 2 * nparams) %>% 
+  arrange(AIC) %>% slice(1) %>% 
+  group_by(leftout,model) %>% 
+  summarize(mAIC = mean(AIC),
+            lengths = length(AIC)) %>%  
+  mutate(deltaAIC = mAIC - min(mAIC)) %>% 
+    bind_rows(expandedInd) %>% 
+  arrange(leftout) %>% 
+  mutate(leftout = factor(leftout,  levels = c(0,leftoutnum),
+                          labels =  leftoutlabels)) %>% 
+  mutate(model = factor(model, levels = models2))
+
+
+AICDEV <- bind_rows(DeltaAICFull,DeltaAICLOSsO) %>% 
+  mutate(deltaAICadj = ifelse(deltaAIC > limitsY, limitsY,round(deltaAIC))) %>% 
+ 
+ mutate(deltaAICadj2 = round(deltaAIC)) %>% 
+  mutate(deltaAICadj2 = as.character(deltaAICadj2)) %>% 
+  mutate(deltaAICadj2 = ifelse(deltaAIC > 10000, paste0(">1e4"),deltaAICadj2)) %>%
+  mutate(type = "In-sample\nprediction (AIC)")
+
+DeltaCVDev <- LOHoldout %>% 
+  filter(model %in% models) %>% 
+  group_by(model,id,leftout) %>% 
+  mutate(CVDev = CVLL * 2 ) %>% 
+  arrange(CVDev) %>% slice(1) %>% 
+  group_by(leftout,model) %>% 
+  summarize(mAIC = mean(CVDev),
+            lengths = length(CVDev)) %>% 
+  mutate(deltaAIC = mAIC - min(mAIC)) %>%
+  bind_rows(expandedInd) %>% 
+  arrange(leftout) %>% 
+  mutate(leftout = factor(leftout,  levels = c(0,leftoutnum),
+                          labels =  leftoutlabels)) %>% 
+  mutate(deltaAICadj = ifelse(deltaAIC > limitsY, limitsY,round(deltaAIC))) %>%
+  mutate(deltaAICadj2 = round(deltaAIC)) %>% 
+  mutate(deltaAICadj2 = as.character(deltaAICadj2)) %>% 
+  mutate(deltaAICadj2 = ifelse(deltaAIC > 10000, paste0(">1e4"),deltaAICadj2)) %>%
+  mutate(type = "Out-of-sample\nprediction (Dev)")  %>% 
+  mutate(model = factor(model, levels = models2))
+
+
+Devs <- bind_rows(AICDEV,DeltaCVDev) %>% 
+  mutate(model = factor(model, levels = models2)) %>% 
+  mutate(type  = factor(type,
+                        levels = c(
+                                   "Out-of-sample\nprediction (Dev)",
+                                   "In-sample\nprediction (AIC)"
+                                   )))
+
+  
+Annotation <- Devs %>% select(type,leftout,lengths) %>% distinct() %>% 
+  #filter(leftout %in% leftoutlabels[selectleftouts + 1] ) %>%  
+  
+  mutate(lengths = ifelse(!is.na(lengths),paste("N =",lengths),lengths)) %>% 
+  add_row(type = "Out-of-sample\nprediction (Dev)",
+          leftout = "-",
+          lengths = NA) %>% 
+  mutate(type  = factor(type,
+                        levels = c(
+                          "Out-of-sample\nprediction (Dev)",
+                          "In-sample\nprediction (AIC)"
+                        ))) 
+
+Devs2 <- Devs %>% filter(type=="In-sample\nprediction (AIC)") %>% mutate(type = factor(type))
+Annotation2 <- Annotation %>% filter(type=="In-sample\nprediction (AIC)") %>% mutate(type = factor(type))
+
+AICDev2 <- ggplot(data=Devs2,aes(y = deltaAICadj,x = model)) +
+  # geom_text(data = Annotation2, aes(y = 15, x = 4,label = paste("Delta")),parse=TRUE) +
+  geom_text(data = Annotation2, aes(y = 10, x = 9,label =lengths),color=textY) +
+  # 
+  geom_bar(data=Devs2,stat = "identity",aes(fill = deltaAICadj)) +
+  
+  coord_flip(ylim = c(0,limitsY),xlim=c(1,9)) +
+  scale_fill_gradientn(name = expression(paste(Delta)),
+                       colors = rev(brewer.pal(n = 9, name = "YlOrRd")),
+                       limits=c(0,limitsY))+
+  geom_text(data = Devs2,
+            aes(label=deltaAICadj2, y = limitsY), hjust = 1,size=3)+
+  
+  scale_y_continuous(name = expression(paste(Delta)), breaks = breaksY, 
+                     labels = labelsY ) +
+  scale_x_discrete(name = "Model"
+                   ,labels = c(
+                     expression(paste("VP(",kappa,")U-")),
+                     expression(paste("VP(",kappa,")A-")),
+                     expression(paste("VP(",kappa,")P-")),
+                     expression(paste("VP(",kappa,")F+")),
+                     expression(paste("VP(",kappa,")F-")),
+                     expression(paste("VP(",kappa,")A+")),
+                     expression(paste("VP(",kappa,")P+")),
+                     expression(paste("VP(",kappa,")U+"))
+                   )
+  ) +
+  
+  facet_grid(type~leftout,drop=FALSE) +
+  theme(axis.text.x = element_text(size=11),
+        axis.title.x = element_text(size = 12),
+        axis.title.y = element_blank(),
+        
+        axis.text.y = element_text(size=11,hjust=0),
+        axis.ticks.y = element_blank(),
+        panel.background = element_rect(fill = "transparent"),
+        plot.background = element_rect(fill ="transparent",colour ="transparent"),
+        
+        legend.position = "none",
+        
+        panel.border = element_rect(colour = "black", fill = "transparent"),
+        strip.background = element_rect(fill = "white"),
+        strip.placement = "outside",
+        strip.text = element_text(size=11))
+
+
+Devs1 <- Devs %>% filter(type=="Out-of-sample\nprediction (Dev)") %>% mutate(type = factor(type))
+Annotation1 <- Annotation %>% filter(type=="Out-of-sample\nprediction (Dev)") %>% mutate(type = factor(type))
+
+
+AICDev1 <- ggplot(data=Devs1,aes(y = deltaAICadj,x = model)) +
+  # geom_text(data = Annotation2, aes(y = 15, x = 4,label = paste("Delta")),parse=TRUE) +
+  geom_text(data = Annotation1, aes(y = 10, x = 9,label =lengths),color=textY) +
+  # 
+  geom_bar(data=Devs1,stat = "identity",aes(fill = deltaAICadj)) +
+  
+  coord_flip(ylim = c(0,limitsY),xlim=c(1,9)) +
+  scale_fill_gradientn(name = expression(paste(Delta)),
+                       colors = rev(brewer.pal(n = 9, name = "YlOrRd")),
+                       limits=c(0,limitsY))+
+  geom_text(data = Devs1,
+            aes(label=deltaAICadj2, y = limitsY), hjust = 1,size=3)+
+  
+  scale_y_continuous(name = expression(paste(Delta)), breaks = breaksY, 
+                     labels = labelsY) +
+  scale_x_discrete(name = "Model"
+                   ,labels = c(
+                     expression(paste("VP(",kappa,")U-")),
+                     expression(paste("VP(",kappa,")A-")),
+                     expression(paste("VP(",kappa,")P-")),
+                     expression(paste("VP(",kappa,")F+")),
+                     expression(paste("VP(",kappa,")F-")),
+                     expression(paste("VP(",kappa,")A+")),
+                     expression(paste("VP(",kappa,")P+")),
+                     expression(paste("VP(",kappa,")U+"))
+                   )
+  ) +
+  
+  facet_grid(type~leftout,drop=FALSE) +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.y = element_text(size=11,hjust=0),
+        axis.ticks.y = element_blank(),
+        panel.background = element_rect(fill = "transparent"),
+        plot.background = element_rect(fill ="transparent",colour ="transparent"),
+        
+        legend.position = "none",
+        
+        panel.border = element_rect(colour = "black", fill = "transparent"),
+        strip.background = element_rect(fill = "white"),
+        strip.placement = "outside",
+        strip.text = element_text(size=11))
+
+
+plot_grid(AICDev1,AICDev2,ncol=1,rel_heights = c(0.85,1))
+
+}
+
+
+#Error distribution ------------------------------------------------------------
+
+
+ErrorDist <- function(PredLOSSO,PredFull,expData){
+
+  
+  
+  PredictionLOSSO <- PredLOSSO %>% 
+    filter(model %in% models) %>% 
+    mutate(model = factor(model,levels = models)) %>% 
+  
+    mutate(setsize = factor(setsize,
+                          levels = expsetsize,
+                          labels =  setsizelabels),
+         leftout = factor(leftout,
+                          levels = c(0,expsetsize),
+                          labels = leftoutlabels))
+
+  PredictionFull <- PredFull %>% 
+    filter(model %in% models) %>% 
+    mutate(model = factor(model,levels = models)) %>% 
+  
+    mutate(setsize = factor(setsize,
+                          levels = expsetsize,
+                          labels =  setsizelabels),
+         leftout = factor(leftout,
+                          levels = c(0,expsetsize),
+                          labels = leftoutlabels)) 
+
+Prediction <- bind_rows(PredictionLOSSO,PredictionFull)
+
+
+Prediction<- Prediction  %>% 
+  mutate(Predicted = ifelse((leftout == "Left out: Ss 1" & setsize == "Ss 1") | 
+                              (leftout == "Left out: Ss 2" & setsize == "Ss 2") |
+                              (leftout == "Left out: Ss 3" & setsize == "Ss 3") |
+                              (leftout == "Left out: Ss 4" & setsize == "Ss 4")|
+                              (leftout == "Left out: Ss 5" & setsize == "Ss 5")|
+                              (leftout == "Left out: Ss 6" & setsize == "Ss 6")|
+                              (leftout == "Left out: Ss 7" & setsize == "Ss 7") |
+                              (leftout == "Left out: Ss 8" & setsize == "Ss 8"),
+                            "Out-of-sample prediction","In-sample prediction")) 
+
+preleftouts <- c(0,uniqueSs)
+
+selectleftouts <- unique(c(preleftouts[preleftouts < 4],preleftouts[length(preleftouts)]))
+
+Annotation <- Prediction %>% select(setsize,leftout,Predicted) %>% 
+  distinct() %>% mutate(error_0 = Inf ) %>% 
+  filter(setsize %in% setsizelabels[selectleftouts[c(2:length(selectleftouts))]]) %>%
+  filter(leftout %in% leftoutlabels[selectleftouts + 1])
+
+
+ggplot(data = expData %>% 
+                              filter(setsize %in% setsizelabels[selectleftouts[c(2:length(selectleftouts))]]),
+                            aes(x = error_0)) +
+  # geom_text(data = Annotation,
+  #           aes(x = -1.3,y = max(Prediction %>%
+  #                                  filter(setsize %in% setsizelabels[selectleftouts[c(2:length(selectleftouts))]]) %>%
+  #                                  filter(leftout %in% leftoutlabels[selectleftouts + 1]) %>%
+  #                                  .$prediction)/2,
+  #               label = Predicted),size=3,angle=90) +
+  geom_rect(data = Annotation,xmin = -Inf,ymin = -Inf, xmax = Inf,ymax = Inf,aes(fill=Predicted),color="black") +
+  scale_fill_manual(name=experiment,values = c("white","#dedede"))+
+  geom_histogram(aes(y = ..density..),color="darkgrey",fill="#edeaea",bins=60) +
+  coord_cartesian(xlim = c(-pi/2,pi/2))+
+  
+  scale_y_continuous(limits=c(0,max(Prediction %>% 
+                                      filter(setsize %in% setsizelabels[selectleftouts[c(2:length(selectleftouts))]]) %>% 
+                                      filter(leftout %in% leftoutlabels[selectleftouts + 1] )  %>% 
+                                      
+                                      .$prediction,na.rm=T) + 0.2)) +
+  scale_x_continuous(limits=c(-pi,pi),name = "Error (radian)",breaks = c(-pi,-pi/2,0,pi/2,pi),
+                     labels = c(expression(-pi),
+                                expression(-frac(pi,2)),
+                                0,
+                                expression(frac(pi,2)),
+                                expression(pi))) +
+  geom_line(data = Prediction %>% 
+              filter(setsize %in% setsizelabels[selectleftouts[c(2:length(selectleftouts))]]) %>% 
+              filter(leftout %in% leftoutlabels[selectleftouts + 1]),
+            
+            aes(x = data,y=prediction,linetype=model,color=model,group=model), size = 0.8) +
+  facet_grid(setsize~leftout) +
+  
+  scale_linetype_manual(name=experiment,
+                        values = c("dashed","dashed","dashed","dashed",
+                                   "solid","solid","solid","solid"),
+                        labels = c(
+                          
+                          expression(paste("VP(",kappa,")A-")),
+                          expression(paste("VP(",kappa,")F-")),
+                          expression(paste("VP(",kappa,")P-")),
+                          expression(paste("VP(",kappa,")U-")),
+                          expression(paste("VP(",kappa,")A+")),
+                          expression(paste("VP(",kappa,")F+")),
+                          expression(paste("VP(",kappa,")P+")),
+                          expression(paste("VP(",kappa,")U+"))
+                        )
+  ) +
+  
+  scale_color_manual(name = experiment,
+                     values =  c("#332288","#E69F00","#44AA99","#CC79A7",
+                                 "#332288","#E69F00","#44AA99","#CC79A7"),
+                     labels = c(
+                       expression(paste("VP(",kappa,")A-")),
+                       expression(paste("VP(",kappa,")F-")),
+                       expression(paste("VP(",kappa,")P-")),
+                       expression(paste("VP(",kappa,")U-")),
+                       expression(paste("VP(",kappa,")A+")),
+                       expression(paste("VP(",kappa,")F+")),
+                       expression(paste("VP(",kappa,")P+")),
+                       expression(paste("VP(",kappa,")U+"))
+                     )
+  )+
+guides(linetype = guide_legend(override.aes = list(size = 1.2),ncol=4 ) ) +
+
+theme(axis.text.x = element_text(size=11),
+      plot.title = element_text(size = 14,hjust=0.5),
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      axis.title.x = element_text(size=12),
+      axis.title.y = element_blank(),
+      panel.background = element_rect(fill = "transparent"),
+      panel.border = element_rect(colour = "black", fill=NA, size=0.5),
+      strip.background = element_rect(fill = "transparent"),
+      plot.background = element_rect(fill = "transparent"),
+      strip.text = element_text(size = 12),
+      legend.position = "top",
+      legend.direction = "horizontal",
+      legend.text = element_text(size = 13),
+      legend.background = element_rect(fill="white",color="lightgrey"),
+      legend.key = element_rect(colour = "transparent", fill = "white"),
+      legend.title = element_blank(),
+      legend.key.width = unit(3,"line"))
+
+}
+
+# Summary Stats ----------------------------------------------------------------
+
+
+CVind <- readRDS(paste0("IndividualGraphs/SummaryStat/SumStatLOSSO_",experiment,"_ind.rds"))
+CVagg <- readRDS(paste0("IndividualGraphs/SummaryStat/SumStatLOSSO_",experiment,"_agg.rds"))
+CVaver <- readRDS(paste0("IndividualGraphs/SummaryStat/SumStatLOSSO",experiment,"_averagepred.rds"))
+CVidAvExcl <- readRDS(paste0("IndividualGraphs/SummaryStat/SumStatLOSSO_",experiment,"_idAvExcl.rds"))
+
+# Make NRMSD of summary statistics ---------------------------------------------
+
+# Individual
+
+CVdat_meandat <- CVind %>% filter(id != "Av") %>% filter(model == "Data") %>% 
+  group_by(exp,id,model,leftout) %>% summarize(ssqe = mean(meanErr),
+                                   ssqvar = mean(Var),
+                                   ssqkurt = mean(kurt)) %>% 
+  pivot_longer(!c(exp,id,model,leftout),names_to = "measure",values_to="value") %>% 
+ slice(rep(1:n(),each=8 * length(c(0,uniqueSs)))) %>% 
+  arrange(exp,id,leftout,measure) %>% ungroup()
+
+
+CVdat <- CVind %>% filter(model == "Data") %>%  slice(rep(1:n(),each=8)) %>% slice(rep(1:n(),each = length(c(0,uniqueSs))))
+
+
+predCV <- CVind %>% filter(model != "Data") %>%  filter(id != "Av") %>% 
+  arrange(id,setsize,leftout,model)
+obsCV <- CVdat %>% arrange(id,setsize,leftout)
+
+
+
+NRMSD_ind <- predCV %>% 
+    mutate(MeanErrodiff = (meanErr - obsCV$meanErr)^2,
+         Vardiff = (Var - obsCV$Var)^2,
+         kurtdiff = (kurt - obsCV$kurt)^2) %>% 
+      group_by(exp,leftout,id,model) %>% 
+  summarize(ssqe = sqrt(sum(MeanErrodiff)/length(MeanErrodiff)),
+            ssqvar = sqrt(sum(Vardiff)/length(Vardiff)),
+            ssqkurt = sqrt(sum(kurtdiff)/length(kurtdiff))) %>% 
+   mutate(measure2 = "RMSE") %>% 
+  pivot_longer(!c(id,exp,leftout,model,measure2),names_to = "measure",values_to="value")  %>% 
+    arrange(exp,id,measure,leftout) %>% 
+  ungroup() %>% 
+     mutate(value = value/CVdat_meandat$value)
+
+
+# Aggregate
+
+CVdat_meandat_agg <- CVagg %>% filter(model == "Data") %>% 
+  group_by(exp,id,model,leftout) %>% summarize(ssqe = mean(meanErr),
+                                   ssqvar = mean(Var),
+                                   ssqkurt = mean(kurt)) %>% 
+  pivot_longer(!c(exp,id,leftout,model),names_to = "measure",values_to="value") %>% 
+ slice(rep(1:n(),each=8 * length(c(0,uniqueSs)))) %>% 
+  arrange(exp,id,leftout,measure) %>% ungroup()
+
+
+CVdat_agg <- CVagg %>% filter(model == "Data") %>%  slice(rep(1:n(),each=8)) %>% slice(rep(1:n(),each = length(c(0,uniqueSs))))
+
+
+predCV_agg <- CVagg %>% filter(model != "Data") %>% arrange(id,setsize,leftout,model)
+obsCV_agg <- CVdat_agg  %>% arrange(id,setsize,leftout)
+
+
+NRMSD_agg <- predCV_agg %>% 
+    mutate(MeanErrodiff = (meanErr - obsCV_agg$meanErr)^2,
+         Vardiff = (Var - obsCV_agg$Var)^2,
+         kurtdiff = (kurt - obsCV_agg$kurt)^2) %>% 
+      group_by(exp,id,leftout,model) %>% 
+  summarize(ssqe = sqrt(sum(MeanErrodiff)/length(MeanErrodiff)),
+            ssqvar = sqrt(sum(Vardiff)/length(Vardiff)),
+            ssqkurt = sqrt(sum(kurtdiff)/length(kurtdiff))) %>% 
+   mutate(measure2 = "RMSE") %>% 
+  pivot_longer(!c(exp,id,leftout,model,measure2),names_to = "measure",values_to="value")  %>% 
+    arrange(exp,id,leftout,measure) %>% 
+  ungroup() %>% 
+     mutate(value = value/CVdat_meandat_agg$value)
+
+# id = Av 
+
+CVdat_meandat_idAv <- CVidAvExcl %>% filter(model == "Data") %>% 
+  group_by(id,model,leftout) %>% summarize(ssqe = mean(meanErr),
+                                   ssqvar = mean(Var),
+                                   ssqkurt = mean(kurt)) %>% 
+  pivot_longer(!c(id,leftout,model),names_to = "measure",values_to="value") %>% 
+ slice(rep(1:n(),each=8 * length(c(0,uniqueSs)))) %>% 
+  arrange(id,leftout,measure) %>% ungroup()
+
+
+CVdat_idAv <- CVidAvExcl %>% filter(model == "Data") %>%  slice(rep(1:n(),each=8)) %>% slice(rep(1:n(),each = length(c(0,uniqueSs))))
+
+
+predCV_idAv <- CVidAvExcl %>% filter(model != "Data") %>% arrange(id,setsize,leftout,model)
+obsCV_idAv <- CVdat_idAv  %>% arrange(id,setsize,leftout)
+
+
+NRMSD_idAv <- predCV_idAv %>% 
+    mutate(MeanErrodiff = (meanErr - obsCV_idAv$meanErr)^2,
+         Vardiff = (Var - obsCV_idAv$Var)^2,
+         kurtdiff = (kurt - obsCV_idAv$kurt)^2) %>% 
+      group_by(id,leftout,model) %>% 
+  summarize(ssqe = sqrt(sum(MeanErrodiff)/length(MeanErrodiff)),
+            ssqvar = sqrt(sum(Vardiff)/length(Vardiff)),
+            ssqkurt = sqrt(sum(kurtdiff)/length(kurtdiff))) %>% 
+   mutate(measure2 = "RMSE") %>% 
+  pivot_longer(!c(id,leftout,model,measure2),names_to = "measure",values_to="value")  %>% 
+    arrange(id,leftout,measure) %>% 
+  ungroup() %>% 
+     mutate(value = value/CVdat_meandat_idAv$value)
+
+
+
+# average across id
+
+CVdat_meandat_aver <- CVaver %>% filter(model == "Data") %>% 
+  group_by(exp,id,model,leftout) %>% summarize(ssqe = mean(meanErr),
+                                   ssqvar = mean(Var),
+                                   ssqkurt = mean(kurt)) %>% 
+  pivot_longer(!c(exp,id,leftout,model),names_to = "measure",values_to="value") %>% 
+ slice(rep(1:n(),each=8 * length(c(0,uniqueSs)))) %>% 
+  arrange(exp,id,leftout,measure) %>% ungroup()
+
+CVdat_aver <- CVaver %>% filter(model == "Data") %>%  slice(rep(1:n(),each=8)) %>% slice(rep(1:n(),each = length(c(0,uniqueSs))))
+
+predCV_aver <- CVaver %>% filter(model != "Data") %>%  filter(id == "Averagepred") %>% 
+   arrange(id,setsize,leftout,model)
+obsCV_aver <- CVdat_aver %>% arrange(id,setsize,leftout)
+
+
+NRMSD_aver <- predCV_aver %>% 
+    mutate(MeanErrodiff = (meanErr - obsCV_aver$meanErr)^2,
+         Vardiff = (Var - obsCV_aver$Var)^2,
+         kurtdiff = (kurt - obsCV_aver$kurt)^2) %>% 
+      group_by(exp,id,leftout,model) %>% 
+  summarize(ssqe = sqrt(sum(MeanErrodiff)/length(MeanErrodiff)),
+            ssqvar = sqrt(sum(Vardiff)/length(Vardiff)),
+            ssqkurt = sqrt(sum(kurtdiff)/length(kurtdiff))) %>% 
+   mutate(measure2 = "RMSE") %>% 
+  pivot_longer(!c(exp,id,leftout,model,measure2),names_to = "measure",values_to="value")  %>% 
+    arrange(exp,id,leftout,measure) %>% 
+  ungroup() %>% 
+     mutate(value = value/CVdat_meandat_aver$value)
+
+
+CVind_averageSumStat <- CVind %>% group_by(exp,leftout,setsize,model) %>% 
+  filter(!id %in% FailedSzPrediction) %>% 
+  summarise_at(vars(-group_cols()), mean)
+
+# Make plot
+
+Vars1 <- function(CVprep) {
+  
+CVprep <- CVind_averageSumStat %>% ungroup()
+
+preleftouts <- c(0,uniqueSs)
+
+firstbit <- preleftouts[preleftouts < 4]
+if(length(firstbit) > 3){
+  limited <- firstbit[c(1:3)]
+} else {
+  limited <- firstbit
+}
+
+selectleftouts <- unique(c(limited,preleftouts[length(preleftouts)]))
+
+CV <- CVprep
+
+CV <- CV %>% mutate(model = factor(model, 
+                                   levels = c("Data",models)))
+
+
+CVplot <- CV %>% 
+  filter(model %in% c("Data",models)) %>% 
+  pivot_longer(!c(exp,id,model,setsize,leftout),names_to = "measure",values_to="value") %>% 
+  mutate(measure = factor(measure, levels = c("Var","meanErr","kurt"),
+                          labels = c(expression(paste("circular ",sigma^2)),
+                                     expression(paste("mean abs. deviation (radian)")),
+                                     expression(paste("kurtosis"))))) %>% 
+  filter(leftout %in% c(selectleftouts,9)) %>%
+ 
+  mutate(modelRN = ifelse(model %in% models[1:4],"RN-","RN+")) %>% 
+   mutate(model2 = paste0(modelRN," , ",leftout)) %>% 
+  mutate(modelLimit = case_when(model %in% c("MK_RNminus","MK_RNplus") ~ "VP-A",
+                            model %in% c("MK_FM_RNminus","MK_FM_RNplus") ~ "VP-F",
+                            model %in% c("MK_P_RNminus","MK_P_RNplus") ~ "VP-P",
+         TRUE ~ "VP-U")) 
+
+
+lengthdat <- dim(CVplot %>% filter(model == "Data"))[[1]]
+CVdata <- CVplot %>% filter(model == "Data") %>% slice(rep(1:n(),4)) %>% ungroup() %>% 
+  mutate(modelLimit = rep(c("VP-A","VP-F","VP-P","VP-U"),each = lengthdat)) 
+
+levelsLim <- unique(CVplot$model2)
+
+sortedLevels <- sort(as.numeric(str_sub(levelsLim, start= -1)),index.return=TRUE)$ix
+
+Vars1data <- bind_rows(CVplot,CVdata) %>% 
+ 
+  mutate(leftout = factor(leftout,levels = selectleftouts,
+                          labels = leftoutlabels[selectleftouts+1])) %>% 
+  mutate(model3 = paste0(modelRN," , ",leftout))
+
+properLabels <- unique(Vars1data$model3)
+
+Vars1data <- Vars1data %>% 
+  mutate(model2 = factor(model2, levels = levelsLim[sortedLevels],
+                         labels = properLabels[sortedLevels]))
+
+Vars1 <- ggplot(Vars1data %>% 
+                  filter(model == "Data"), 
+                aes(x = setsize, y = value)) +
+  geom_hpline(aes(linetype = model),size=1.5,width=1.2) +
+  geom_point(data = Vars1data %>% filter(model != "Data"),
+             aes(x = setsize, y = value,shape = model2, fill = model2),
+             position = position_dodge(0.8),size=4,alpha=0.7,color="black") +
+  scale_x_continuous(labels=c(c(1:8)),name="Set size",breaks = c(1:8)) +
+  facet_grid(modelLimit~measure,scales="free_y",labeller=label_parsed) + 
+  scale_y_continuous(name = "Summary Statistic",breaks = seq(0,1.75,.25),limits = c(0,1.75))+
+  scale_linetype_manual(values = "solid") +
+  scale_shape_manual(values = rep(c(21,22),length(selectleftouts))
+  ) +
+  scale_fill_manual(values = c("#ffc599","#D55E00","#99daff","#0072B2",
+                               "#f1dae7","#CC79A7","#FFFACD", "#fff000")
+  ) +
+  theme(axis.text = element_text(size=14),
+        axis.title.y = element_blank(),
+        axis.title.x = element_text(size=14),
+        plot.title = element_text(size = 18,hjust=0.5),
+        panel.background = element_rect(fill = "transparent"),
+        panel.border = element_rect(colour = "black", fill=NA, size=0.5),
+        strip.background = element_rect(fill = "transparent"),
+        plot.background = element_rect(fill = "transparent"),
+        strip.text = element_text(size = 14),
+        legend.key = element_rect(colour = "transparent", fill = "white"),
+        legend.background = element_rect(fill = "transparent"),
+        legend.text = element_text(size = 12,face="plain"),
+        #legend.position = c(0.1,0.6),
+        legend.text.align = 0,
+        legend.key.height = unit(0.5,"line"),
+        legend.title = element_blank(),
+        legend.box = "vertical")
+
+return(Vars1)
+
+}
+Vars2 <- function(NRMSD){
+  
+  models3 <- c("MK_U_RNplus","MK_U_RNminus",
+             "MK_P_RNplus","MK_P_RNminus",
+             "MK_FM_RNplus","MK_FM_RNminus",
+             "MK_RNplus","MK_RNminus")
+  
+  selectleftouts <- c(0,uniqueSs)
+SumStat2_all <-NRMSD%>% 
+  mutate(measure = factor(measure, levels = c("ssqvar","ssqe","ssqkurt"),
+                          labels = c(expression(paste("circular ",sigma^2)),
+                                     expression(paste("mean abs. deviation (radian)")),
+                                     expression(paste("kurtosis"))))) %>% 
+  filter(model %in% models) %>% 
+  mutate(model = factor(model, levels = c("MK_RNminus","MK_RNplus","MK_FM_RNminus","MK_FM_RNplus",
+                                          "MK_P_RNminus","MK_P_RNplus","MK_U_RNminus","MK_U_RNplus"))) %>% 
+  # mutate(model = factor(model, levels = models)) %>% 
+  filter(leftout %in% selectleftouts) %>% 
+  mutate(leftout = factor(leftout, levels = rev(selectleftouts),
+                          labels = c(rev(leftoutlabels[selectleftouts+1])[c(1:(length(selectleftouts)-1))],
+                                     "No Ss left out"))) %>%
+  mutate(combs = paste0(model,"_",leftout)) %>% 
+  mutate(modellimit = case_when(model %in% c("MK_RNminus","MK_RNplus") ~ "VP-A",
+                                model %in% c("MK_FM_RNminus","MK_FM_RNplus") ~ "VP-F",
+                                model %in% c("MK_P_RNminus","MK_P_RNplus") ~ "VP-P",
+                                model %in% c("MK_U_RNminus","MK_U_RNplus") ~ "VP-U",
+                                TRUE ~ "NA")) %>% 
+  mutate(modelRN = case_when(model %in% models[c(1:4)] ~ "Minus",
+                             model %in% models[c(5:8)] ~ "Plus",
+                             TRUE ~ "NA")) %>% 
+  mutate(type = "all")
+
+
+SumStat <- SumStat2_all  %>%  mutate(model = factor(model, levels = models3))
+
+
+
+Vars2_SumStat <- ggplot(SumStat %>% filter(measure2 != "Fit"), aes(x = leftout, y = value)) +
+  geom_bar(data = SumStat %>% filter(measure2 != "Fit"),stat="identity",
+           position = "dodge",
+           aes(x = leftout, y = value, fill=model,linetype=model), 
+           color="black",width=0.9) +
+  coord_flip()+
+ # scale_x_discrete(labels = c("Left out:\nSs 2", "Left out:\nSs 1", "Full data\nset fitted"))+
+  facet_wrap(measure~.,ncol=3,labeller=label_parsed) + 
+  scale_y_continuous(name="normalized RMSD",limits=c(0,max(SumStat$value)+0.1))+
+  
+  
+  
+  scale_fill_manual(values = c("#CC79A7","#f1dae7",
+                               "#44AA99","#9ee6da",
+                               "#E69F00","#f2d188",
+                               "#332288","#b2a8e0"),
+                     labels = c(
+                      expression(paste("VP(",kappa,")U+")),
+                      expression(paste("VP(",kappa,")U-")),
+                      expression(paste("VP(",kappa,")P+")),
+                      
+                      expression(paste("VP(",kappa,")P-")),
+                      expression(paste("VP(",kappa,")F+")),
+                      
+                      expression(paste("VP(",kappa,")F-")),
+                      expression(paste("VP(",kappa,")A+")),
+                      expression(paste("VP(",kappa,")A-"))
+                      
+                      
+                      
+                      
+                    ), guide = guide_legend(reverse = TRUE)) +
+  scale_linetype_manual(values = rep(c("solid","dashed"),4),
+                        labels = c(
+                          expression(paste("VP(",kappa,")U+")),
+                          expression(paste("VP(",kappa,")U-")),
+                          expression(paste("VP(",kappa,")P+")),
+                          
+                          expression(paste("VP(",kappa,")P-")),
+                          expression(paste("VP(",kappa,")F+")),
+                          
+                          expression(paste("VP(",kappa,")F-")),
+                          expression(paste("VP(",kappa,")A+")),
+                          expression(paste("VP(",kappa,")A-"))
+                          
+                          
+                          
+                          
+                        ), guide = guide_legend(reverse = TRUE)
+                        )+
+  #ggtitle("(N)RMSD")+
+  theme(axis.text.y = element_text(size=14),
+        axis.text.x = element_text(size=13),
+        axis.title.y = element_blank(),
+        axis.title.x = element_text(size=14),
+        panel.background = element_rect(fill = "transparent"),
+        panel.border = element_rect(colour = "black", fill=NA, size=0.5),
+        strip.background = element_rect(fill = "transparent"),
+        plot.background = element_rect(fill = "transparent"),
+        plot.title = element_text(hjust=0.5,face="plain"),
+        strip.text = element_text(size = 13),
+        legend.key = element_rect(colour = "transparent", fill = "transparent"),
+        legend.background = element_rect(fill = "transparent"),
+        legend.text = element_text(size = 12,face="plain"),
+        #legend.position = c(0.95,0.5),
+        legend.text.align = 0,
+        legend.key.height = unit(0.5,"line"),
+        legend.title = element_blank(),
+        legend.box = "vertical")
+return(Vars2_SumStat)
+}
+
+
+Vars2EB <- function(NRMSD){
+ 
+  models3 <- c("MK_U_RNplus","MK_U_RNminus",
+             "MK_P_RNplus","MK_P_RNminus",
+             "MK_FM_RNplus","MK_FM_RNminus",
+             "MK_RNplus","MK_RNminus")
+  
+  selectleftouts <- c(0,uniqueSs)
+
+Boxplotdat <- NRMSD %>%  mutate(measure = factor(measure, levels = c("ssqvar","ssqe","ssqkurt"),
+                          labels = c(expression(paste("circular ",sigma^2)),
+                                     expression(paste("mean abs. deviation (radian)")),
+                                     expression(paste("kurtosis"))))) %>% 
+  filter(model %in% models) %>% 
+  mutate(model = factor(model, levels = c("MK_RNminus","MK_RNplus","MK_FM_RNminus","MK_FM_RNplus",
+                                          "MK_P_RNminus","MK_P_RNplus","MK_U_RNminus","MK_U_RNplus"))) %>% 
+  # mutate(model = factor(model, levels = models)) %>% 
+  filter(leftout %in% selectleftouts) %>% 
+  mutate(leftout = factor(leftout, levels = rev(selectleftouts),
+                          labels = c(rev(leftoutlabels[selectleftouts+1])[c(1:(length(selectleftouts)-1))],
+                                     "No Ss left out"))) %>%
+  mutate(combs = paste0(model,"_",leftout)) %>% 
+  mutate(modellimit = case_when(model %in% c("MK_RNminus","MK_RNplus") ~ "VP-A",
+                                model %in% c("MK_FM_RNminus","MK_FM_RNplus") ~ "VP-F",
+                                model %in% c("MK_P_RNminus","MK_P_RNplus") ~ "VP-P",
+                                model %in% c("MK_U_RNminus","MK_U_RNplus") ~ "VP-U",
+                                TRUE ~ "NA")) %>% 
+  mutate(modelRN = case_when(model %in% models[c(1:4)] ~ "Minus",
+                             model %in% models[c(5:8)] ~ "Plus",
+                             TRUE ~ "NA")) %>% 
+  mutate(type = "all")
+
+
+BP <- Boxplotdat  %>%  mutate(model = factor(model, levels = models3))
+
+
+Vars2_SumStat <- ggplot(BP , aes(x = leftout, y = value)) +
+  geom_boxplot(data = BP,
+           aes(x = leftout, y = value, fill=model,linetype=model),outlier.shape = 1) +
+  # geom_point(data = SumStat ,stat="identity",
+  #          position = "dodge",
+  #          aes(x = leftout, y = value), 
+  #          color="black") +
+  coord_flip()+
+ # scale_x_discrete(labels = c("Left out:\nSs 2", "Left out:\nSs 1", "Full data\nset fitted"))+
+  facet_wrap(measure~.,ncol=3,labeller=label_parsed,scales = "free_x") + 
+  scale_y_continuous(name="normalized RMSD",limits=c(0,max(BP$value)+0.1))+
+  
+  
+  
+  scale_fill_manual(values = c("#CC79A7","#f1dae7",
+                               "#44AA99","#9ee6da",
+                               "#E69F00","#f2d188",
+                               "#332288","#b2a8e0"),
+                     labels = c(
+                      expression(paste("VP(",kappa,")U+")),
+                      expression(paste("VP(",kappa,")U-")),
+                      expression(paste("VP(",kappa,")P+")),
+
+                      expression(paste("VP(",kappa,")P-")),
+                      expression(paste("VP(",kappa,")F+")),
+
+                      expression(paste("VP(",kappa,")F-")),
+                      expression(paste("VP(",kappa,")A+")),
+                      expression(paste("VP(",kappa,")A-"))
+
+
+
+
+                    ), guide = guide_legend(reverse = TRUE)) +
+  scale_linetype_manual(values = rep(c("solid","dashed"),4),
+                        labels = c(
+                          expression(paste("VP(",kappa,")U+")),
+                          expression(paste("VP(",kappa,")U-")),
+                          expression(paste("VP(",kappa,")P+")),
+
+                          expression(paste("VP(",kappa,")P-")),
+                          expression(paste("VP(",kappa,")F+")),
+
+                          expression(paste("VP(",kappa,")F-")),
+                          expression(paste("VP(",kappa,")A+")),
+                          expression(paste("VP(",kappa,")A-"))
+
+
+
+
+                        ), guide = guide_legend(reverse = TRUE)
+                        )+
+  #ggtitle("(N)RMSD")+
+  theme(axis.text.y = element_text(size=14),
+        axis.text.x = element_text(size=13),
+        axis.title.y = element_blank(),
+        axis.title.x = element_text(size=14),
+        panel.background = element_rect(fill = "transparent"),
+        panel.border = element_rect(colour = "black", fill=NA, size=0.5),
+        strip.background = element_rect(fill = "transparent"),
+        plot.background = element_rect(fill = "transparent"),
+        plot.title = element_text(hjust=0.5,face="plain"),
+        strip.text = element_text(size = 13),
+        legend.key = element_rect(colour = "transparent", fill = "transparent"),
+        legend.background = element_rect(fill = "transparent"),
+        legend.text = element_text(size = 12,face="plain"),
+        #legend.position = c(0.95,0.5),
+        legend.text.align = 0,
+        legend.key.height = unit(0.5,"line"),
+        legend.title = element_blank(),
+        legend.box = "vertical")
+return(Vars2_SumStat)
+}
+
+```
+
+### Experiment-level data {.tabset}
+
+By experiment-level data, we mean the data in ``r experiment`` as a collection of the data provided by all ``r lengthid`` participant(s). The manner in which data, model fitting results and predictions of an experiment are sumamrized can vary depending on goal and approaches. For some aspects of the data, some approaches make more sense than others. For completeness' sake we show a variety here, even if some are somewhat non-sensical.
+
+#### Aggregate Fits
+
+Here we treated all data in ``r experiment`` as if it had been provided by a single participant (rather than provided by ``r lengthid`` participant(s)). We fitted all models to this aggregate data. The model comparison shows relative model fits on the basis of the fit to the aggregate data. 
+
+In the error distribution and summary statistics, the data is given by the observed data aggregated across individuals. The predictions (error distributions, resultant summary statistics and normalized RMSD relative to the aggregate data) are made on the basis of aggregate fit best-fit parameter estimates for all models.
+
+```{r,echo=FALSE, message =FALSE, warning = FALSE}
+
+FitAgg <- QuantFit(FullFitAgg,LOTrainingAgg,LOTestAgg,Agg=T,Av=F)
+
+PredictionLOSSOAgg <- readRDS(paste0("Prediction/prediction_VP_fullLOSSO_",experiment,"_agg.rds")) %>% filter(leftout != 0)
+
+
+PredictionAgg <- readRDS(paste0("Prediction/prediction_VP_fullLOSSO_",experiment,"_agg.rds")) %>% filter(leftout == 0)
+
+
+experimentfile <- bind_rows(data_ol17[data_ol17$exp == "ol17_e1",],data_vdb14,data_pratte17)  %>% 
+  rename(setsize = "set_size") %>% 
+  filter(exp %in% experiment)
+
+
+experimentfile <- experimentfile %>% 
+  filter(exp == experiment)%>% 
+  mutate(setsize = factor(setsize,
+                          levels = expsetsize,
+                          labels =  setsizelabels),
+         id = as.character(factor(id)),
+         Predicted = NA)
+
+
+Errrordistribution <- ErrorDist(PredictionLOSSOAgg,PredictionAgg,experimentfile)
+
+SummaryStats <- Vars1(CVagg)
+
+NRMSDs <- Vars2(NRMSD_agg)
+```
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=8}
+
+plot(FitAgg)
+
+```
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=10}
+
+plot(Errrordistribution)
+
+```
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=10}
+
+plot(SummaryStats)
+
+```
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=10}
+
+plot(NRMSDs)
+
+```
+
+#### Averaging individual parameter estimates
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+
+
+FitsAv <- QuantFit(FullFit,LOTraining,LOTest,Agg=F,Av=T) 
+
+FitsAv2 <- NULL
+if(excludeppt > 0){
+
+
+FitsAv2 <- QuantFit(FullFit %>% filter(!(id %in% FailedSzPrediction)),
+                    LOTraining %>% filter(!(id %in% FailedSzPrediction)),
+                    LOTest %>% filter(!(id %in% FailedSzPrediction)),
+                    Agg=F,Av=T)
+heightFitsAv2 <- 10
+} else {
+  FitsAv2 <- NULL
+  heightFitsAv2 <- 0.1
+
+ }
+  
+PredInd <- readRDS(paste0("Prediction/prediction_idavExclFailed_",experiment,".rds"))
+
+PredictionLOSSO<- PredInd %>% filter(leftout != 0)
+PredictionFull<- PredInd %>% filter(leftout == 0)
+
+experimentfile <- bind_rows(data_ol17[data_ol17$exp == "ol17_e1",],data_vdb14,data_pratte17)  %>% 
+  rename(setsize = "set_size") %>% 
+  filter(exp %in% experiment)
+
+
+experimentfile <- experimentfile %>% 
+  filter(exp == experiment)%>% 
+  filter(!id %in% FailedSzPrediction) %>% 
+  mutate(setsize = factor(setsize,
+                          levels = expsetsize,
+                          labels =  setsizelabels),
+         id = as.character(factor(id)),
+         Predicted = NA)
+
+
+Errrordistribution <- ErrorDist(PredictionLOSSO,PredictionFull,experimentfile)
+
+SummaryStats <- Vars1(CVidAvExcl)
+
+NRMSDs <- Vars2(NRMSD_idAv)
+
+```
+
+
+In this tab, all graphs are shown for the purpose of illustrating the performance in the experiment on average, i.e., averaged across participants.
+
+The model comparison plot is based on determining and averaginfg the relative difference of all individual model fits to the best-fit model. Across the data corpus some participants produced extreme out-of-sample predictions  (> 10000 points) for some held-out set sizes. Where this is the case we present two model comparison graphs. (A) shows the model comparison with all participants included, and where applicable (B) shows the model comparison for those participants excluded for all panels.
+
+Here in ``r experiment``, we excluded ``r excludeppt`` participant(s) (``r FailedSzPrediction``) for extreme out-of-sample predictions (> 10000 points); the number of participants in each panel is shown at the top of each panel.
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 12,fig.height=8}
+
+plot_grid(FitsAv,labels="A")
+
+```
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 12,fig.height=heightFitsAv2}
+
+ plot_grid(FitsAv2,labels="B")
+
+```
+ 
+The predictions of the behavioral signature pattern (error distribution and resultant summary statistics) are based on averaging the parameter estimates of the best-fit individual fits. The observed data is given by the aggregate data for both graphs. If any participants were excluded for extreme out-of-sample prediction in the model comparison, they were also excluded here. Thus the graphs below represent the data and predictions of ``r lengthid - excludeppt`` participants.
+
+
+```{r,echo=FALSE, message =FALSE, warning = FALSE,fig.width = 12,fig.height=10}
+
+plot(Errrordistribution)
+
+```
+
+```{r,echo=FALSE, message =FALSE, warning = FALSE,fig.width = 12,fig.height=10}
+
+plot(SummaryStats)
+
+```
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=10}
+
+plot(NRMSDs)
+
+```
+
+#### Averaging individual predictions
+
+In the tab "Averaging individual parameter estimates", we looked at the prediction of error distributions and resultant summary statistics on the basis of averaging participants' best-fit parameter estimates. Here, the predictions are based on averaging individual's predictions (which were based on best-fit parameter estimates). We excluded ``r excludeppt`` participant(s) (``r FailedSzPrediction``) as in "Averaging individual parameter estimates" before aggregating/averaging individuals' predictions. For the summary statistics (across set sizes, and normalized RMSD) we show two graphs: A) deriving the summary statistics from the averaged error distributions (for NRMSDs compared to the summary statistics of the aggregate data), and B) averaging individuals' summary statistics, and similarly aggregating individuals' normalized RMSDs.
+
+
+```{r,echo=FALSE, message =FALSE, warning = FALSE}
+
+PredAvPred <- PredInd %>% filter(id!="Av") %>% 
+  filter(!id %in% FailedSzPrediction) %>% 
+  group_by(model,leftout,setsize,data) %>%
+  summarize(mprediction = mean(prediction)) %>% 
+  rename("prediction" = mprediction) %>% 
+  mutate(normprediction = prediction/sum(prediction)) %>% 
+  mutate(id = "Averagepred")
+  
+PredictionLOSSO<- PredAvPred %>% filter(leftout != 0)
+PredictionFull<- PredAvPred  %>% filter(leftout == 0)
+
+experimentfile <- bind_rows(data_ol17[data_ol17$exp == "ol17_e1",],data_vdb14,data_pratte17)  %>% 
+  rename(setsize = "set_size") %>% 
+  filter(exp %in% experiment)
+
+
+experimentfile <- experimentfile %>% 
+  filter(!id %in% FailedSzPrediction) %>% 
+  filter(exp == experiment)%>% 
+  mutate(setsize = factor(setsize,
+                          levels = expsetsize,
+                          labels =  setsizelabels),
+         id = as.character(factor(id)),
+         Predicted = NA)
+
+
+Errrordistribution <- ErrorDist(PredictionLOSSO,PredictionFull,experimentfile)
+
+SummaryStats <- Vars1(CVaver)
+
+NRMSDs <- Vars2(NRMSD_aver)
+
+
+```
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=10}
+
+plot(Errrordistribution)
+
+```
+
+Plots labeled "A". The following summary statistics are derived from the averaged error distribution above. The graphs with the normalized NRMSD shows the comparison of these averaged prediction to the aggregate data. This is not particularly useful as the distribution underlying the aggregate data is not necessarily the averaged of the individuals' data, but it is one approach to summarizing the data.
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=10}
+
+plot_grid(SummaryStats,labels="A")
+
+```
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=10}
+
+plot_grid(NRMSDs,labels="A")
+
+```
+
+Plots labeled "B". The following summary statistics are based on averaging participants' summary statistics, for both the data (e.g., the summary statistics derived from individual observed error distributions) and the model predictions (e.g., the summary statistics derived from individual observed error distributions). The graphs with the normalized NRMSD shows the normalized RMSD across individuals as boxplots to provide an idea of the spread of the NRMSD in the experiment for these models (i.e., NOT the normalized RMSD derived from contrasting averaged predicted and observed summary statistics.)
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=10}
+
+SummaryStats <- Vars1(CVind_averageSumStat)
+
+NRMSDs <- Vars2EB(NRMSD_ind)
+
+plot_grid(SummaryStats,labels="B")
+
+```
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=10}
+
+plot_grid(NRMSDs,labels="B")
+
+```
+
+
+### Individual-level data {.tabset}
+
+
+```{r,echo=FALSE, message =FALSE, warning = FALSE}
+
+
+PredInd <- readRDS(paste0("Prediction/prediction_VP_fullLOSSO_",experiment,"_ind.rds"))
+
+Devs_list <- NULL
+
+for (i in seq_along(participants)){
+  
+  
+  AIC <- QuantFit(FullFit %>% filter(id == participants[[i]]),
+                  LOTraining %>% filter(id == participants[[i]]),
+                  LOTest%>% filter(id == participants[[i]]),Agg=F,Av=F) 
+
+  
+  PredictionLOSSO<- PredInd %>% filter(id == participants[[i]]) %>% filter(leftout != 0)
+  PredictionFull<- PredInd %>% filter(id == participants[[i]]) %>% filter(leftout == 0)
+
+  experimentfile <- bind_rows(data_ol17[data_ol17$exp == "ol17_e1",],data_vdb14,data_pratte17)  %>% 
+  rename(setsize = "set_size") %>% 
+  filter(id %in% participants[[i]])
+
+
+    experimentfile <- experimentfile %>% 
+  mutate(setsize = factor(setsize,
+                          levels = expsetsize,
+                          labels =  setsizelabels),
+         id = as.character(factor(id)),
+         Predicted = NA)
+
+
+  Errrordistribution <- ErrorDist(PredictionLOSSO,PredictionFull,experimentfile)
+  
+  SummaryStats <- Vars1(CVind %>% filter(id == participants[[i]]))
+  
+  NRMSDs <- Vars2(NRMSD_ind %>% filter(id == participants[[i]]))
+  
+  Devs_list[[i]] <- plot_grid(AIC, Errrordistribution,SummaryStats,NRMSDs,rel_heights = c(1.5,3.3,2.7,2),ncol=1)
+  
+}
+
+```
+
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=30}
+
+for(i in seq_along(participants)){
+  
+  cat("  \n####",participants[[i]])
+  cat("  \n")
+  
+  plot(Devs_list[[i]])
+  
+  cat("  \n")
+}
+```
+
+## Fitting set sizes separately
+
+It is possible that the effect of set size 1 is due to the data at set size 1 being particularly diagnostic of a difference between models. We therefore fitted the VP models with unlimited memory capacity (+/- models) to the data of all set sizes separately. This means that all parameters were estimated separately for all set sizes, and mean memory precision was not assumed to be linked across set sizes by the power function.
+
+We compared models' fit in deviance terms, with the relative difference between models when data from all set sizes was fit simultaneously. 
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE}
+
+# Load relevant data -----------------------------------------------------------
+# Load empirical data 
+
+load("Data/ol17_prepared.rda")
+load("Data/vdb14_prepared.rda")
+load("Data/pratte17_prepared.rda")
+
+experimentfile <- bind_rows(data_ol17[data_ol17$exp == "ol17_e1",],data_vdb14,data_pratte17)  %>% 
+  rename(setsize = "set_size") 
+
+expsetsize <- sort(unique(experimentfile %>% .$setsize))
+setsizelabels <- paste("Ss",expsetsize)
+leftoutlabels <- c("Full data set fitted", paste("Left out: Ss",expsetsize))
+
+experimentfile <- experimentfile %>% filter(exp == experiment)
+
+participants <- as.character(unique(experimentfile$id))
+lengthid <- length(participants)
+uniqueSs <- unique(sort(experimentfile$setsize))
+
+experimentfile <- experimentfile %>% 
+  mutate(setsize = factor(setsize,
+                          levels = expsetsize,
+                          labels =  setsizelabels),
+         id = as.character(factor(id)),
+         Predicted = NA)
+
+
+missingSs <- expsetsize[!(expsetsize %in% uniqueSs)]
+
+if(length(missingSs) > 0){
+  
+  models <- c("MK_RNminus","MK_RNplus")
+lengthmodel <-length(models)
+
+lengthmissingSs<-length(missingSs)
+
+expandedInd <- as_tibble(data.frame(setsize = rep(missingSs,each=lengthid*lengthmodel),
+                                    deltaDev =NA,
+                                    mDev = NA,
+                                    lengths =NA,
+                                    exp = experiment,
+                                    model = rep(rep(c(models),each=lengthid),lengthmissingSs),
+                                    id = rep(unique(experimentfile$id),lengthmodel * lengthmissingSs)))
+
+expandedInd <- bind_rows(expandedInd %>% mutate(app = "1SepSS"),expandedInd %>% mutate(app = "2SimSS"))
+expandedAgg <- expandedInd %>% select(-id) %>% distinct() %>% mutate(id = "Agg")
+
+} else {
+  expandedInd <- c()
+  expandedAgg <- c()
+}
+
+
+
+missingSs <- expsetsize[!(expsetsize %in% uniqueSs)]
+
+if(length(missingSs) > 0){
+  
+  models <- c("VPnosetsize","VPplusnosetsize","MK_RNminus","MK_RNplus")
+lengthmodel <-length(models)
+
+lengthmissingSs<-length(missingSs)
+
+expandedInd2 <- as_tibble(data.frame(setsize = rep(missingSs,each=lengthid*lengthmodel),
+                                    Var =NA,
+                                    meanErr = NA,
+                                    kurt =NA,
+                                    exp = experiment,
+                                    model = rep(rep(c(models),each=lengthid),lengthmissingSs),
+                                    id = rep(unique(experimentfile$id),lengthmodel * lengthmissingSs)))
+
+#expandedInd2 <- bind_rows(expandedInd2 %>% mutate(app = "1SepSS"),expandedInd %>% mutate(app = "2SimSS"))
+expandedAgg2 <- expandedInd2 %>% select(-id) %>% distinct() %>% mutate(id = "Agg")
+
+} else {
+  expandedInd2 <- c()
+  expandedAgg2 <- c()
+}
+
+
+# Load and combine sep and sim fits
+
+  models <- c("VPnosetsize","VPplusnosetsize","MK_RNminus","MK_RNplus")
+# Aggregate first
+
+Sim <- readRDS("Fits/FitFull_Agg_simSS.rds") %>% 
+  mutate(app = "2SimSS") %>% 
+  filter(exp == experiment)
+
+
+Sep <- readRDS("Fits/FitFull_Agg_sepSS.rds") %>% 
+  filter(model %in% c("VPnosetsize","VPplusnosetsize")) %>% 
+  group_by(exp,setsize,model) %>% 
+  arrange(objective) %>% 
+  slice(1) %>% 
+  select(exp,id,setsize,objective,model) %>% mutate(app = "1SepSS") %>% 
+   mutate(model = case_when(model %in% "VPnosetsize" ~ "MK_RNminus",
+                           model %in% "VPplusnosetsize" ~ "MK_RNplus",
+                           TRUE ~ "NA")) %>% 
+  filter(exp == experiment)
+
+
+
+SSfitsAgg <- bind_rows(Sim,Sep) %>% 
+  mutate(deviance = 2 * objective) %>% 
+  group_by(exp,app,setsize,model) %>% 
+  summarize(mDev = mean(deviance),
+            lengths = length(deviance)) %>%  
+  mutate(deltaDev = mDev - min(mDev)) %>% 
+  ungroup() %>% 
+  bind_rows(expandedAgg) %>% 
+    mutate(app = factor(app,levels = c("2SimSS","1SepSS"),
+                          labels = c("Full data\nset fitted","Set sizes\nfitted separately"))) %>% 
+  mutate(setsize = factor(setsize,levels = expsetsize,
+                          labels = setsizelabels))
+
+# Aggregate first
+
+Sim <- readRDS("Fits/FitFull_simSS.rds") %>% 
+  filter(exp == experiment) %>% mutate(app = "2SimSS")
+
+Sep <- readRDS("Fits/FitFull_sepSS.rds") %>% 
+  filter(exp == experiment) %>% 
+  filter(model %in% c("VPnosetsize","VPplusnosetsize")) %>% 
+  group_by(exp,id,setsize,model) %>% 
+  arrange(objective) %>% 
+  slice(1) %>% 
+  select(exp,id,setsize,objective,model) %>%
+  mutate(app = "1SepSS")  %>% 
+  mutate(model = case_when(model %in% "VPnosetsize" ~ "MK_RNminus",
+                           model %in% "VPplusnosetsize" ~ "MK_RNplus",
+                           TRUE ~ "NA"))
+
+
+SSfitsInd <- bind_rows(Sim,Sep) %>% 
+  mutate(deviance = 2 * objective) %>% 
+  group_by(id,app,setsize,model) %>% 
+  summarize(mDev = mean(deviance),
+            lengths = length(deviance)) %>%  
+  mutate(deltaDev = mDev - min(mDev)) %>% 
+  ungroup() %>% 
+   bind_rows(expandedInd) %>% 
+ 
+    mutate(app = factor(app,levels = c("2SimSS","1SepSS"),
+                          labels = c("Full data\nset fitted","Set sizes\nfitted separately"))) %>% 
+  mutate(setsize = factor(setsize,levels = expsetsize,
+                          labels = setsizelabels))
+
+SSfitsAV <- bind_rows(Sim,Sep) %>% 
+  mutate(deviance = 2 * objective) %>% 
+  group_by(app,setsize,model) %>% 
+  summarize(mDev = mean(deviance),
+            lengths = length(deviance)) %>%  
+  mutate(deltaDev = mDev - min(mDev)) %>% 
+    bind_rows(expandedAgg)%>% 
+    mutate(app = factor(app,levels = c("2SimSS","1SepSS"),
+                          labels = c("Full data\nset fitted","Set sizes\nfitted separately"))) %>% 
+  mutate(setsize = factor(setsize,levels = expsetsize,
+                          labels = setsizelabels))
+
+# Make deviance graph
+
+MakeDevPlot <- function(Fits,Agg){
+
+  if(Agg){
+    breaksY <- seq(0,150,50)
+    labelsY <- c(seq(0,100,50),"...") 
+    limitsY <- 150
+
+  } else {
+    breaksY <- seq(0,15,5)
+    labelsY <- c(seq(0,10,5),"...") 
+    limitsY <- 15
+  }
+
+onedub <- ggplot(Fits %>% filter(app == "Full data\nset fitted"),
+                 aes(x = model,y=deltaDev,group=model)) +
+  geom_bar(aes(fill = model,linetype=model), color="black",stat="identity",  position = "dodge")+
+  # geom_text(data = Ppl %>% filter(app == "Full data\nset fitted"), 
+  #           aes(x = 2.5, y = 2,label = paste("N = ",lengths)))+
+  # 
+  
+  geom_text(data = Fits %>% filter(app == "Full data\nset fitted"),
+            aes(label=ifelse(deltaDev > 0, round(deltaDev),NA), y = limitsY), hjust = 1,size=4)+
+  facet_grid(app~setsize) +
+  scale_y_continuous(limits=c(0,limitsY),breaks=breaksY,
+                     labels = labelsY,name=expression(paste(Delta, " Deviance")))+
+  scale_x_discrete(labels = c(expression(paste("VP(",kappa,")A-")),
+                              expression(paste("VP(",kappa,")A+"))))+
+  coord_flip() +
+  
+  
+  
+  scale_fill_manual(values = c("#f1dae7","#CC79A7"),
+                    guide = guide_legend(FALSE)) +
+  scale_linetype_manual(values = c("dashed","solid"),
+                        guide = guide_legend(FALSE)) +
+  #ggtitle("(N)RMSD")+
+  theme(axis.text.y = element_text(size=14),
+        axis.text.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.background = element_rect(fill = "transparent"),
+        panel.border = element_rect(colour = "black", fill=NA, size=0.5),
+        strip.background = element_rect(fill = "transparent"),
+        plot.background = element_rect(fill = "transparent"),
+        plot.title = element_text(hjust=0.5,face="plain"),
+        strip.text = element_text(size = 13),
+        legend.key = element_rect(colour = "transparent", fill = "transparent"),
+        legend.background = element_rect(fill = "transparent"),
+        legend.text = element_text(size = 12,face="plain"),
+        legend.position ="none",
+        legend.text.align = 0,
+        legend.key.height = unit(0.5,"line"),
+        legend.title = element_blank(),
+        legend.box = "vertical")
+
+twodub <- ggplot(Fits %>% filter(app == "Set sizes\nfitted separately"),
+                 aes(x = model,y=deltaDev,group=model)) +
+  geom_bar(aes(fill = model,linetype=model), color="black",stat="identity",  position = "dodge")+
+  # geom_text(data = Ppl %>% filter(app == "Full data\nset fitted"), 
+  #           aes(x = 2.5, y = 2,label = paste("N = ",lengths)))+
+  # 
+   geom_text(data = Fits %>% filter(app == "Set sizes\nfitted separately"),
+            aes(label=ifelse(deltaDev > 0, round(deltaDev),NA), y = limitsY), hjust = 1,size=4)+
+  facet_grid(app~setsize) +
+  scale_y_continuous(limits=c(0,limitsY),breaks=breaksY,
+                     labels = labelsY,name=expression(paste(Delta, " Deviance")))+
+  scale_x_discrete(labels = c(expression(paste("VP(",kappa,")A-")),
+                              expression(paste("VP(",kappa,")A+"))))+
+  coord_flip() +
+  
+  scale_fill_manual(values = c("#afd8f0","#56B4E9"),
+                    guide = guide_legend(FALSE)) +
+  scale_linetype_manual(values = c("dashed","solid"),
+                        guide = guide_legend(FALSE)) +
+  #ggtitle("(N)RMSD")+
+  theme(axis.text.y = element_text(size=14),
+        axis.text.x = element_text(size=13),
+        axis.title.y = element_blank(),
+        axis.title.x = element_text(size=14),
+        panel.background = element_rect(fill = "transparent"),
+        panel.border = element_rect(colour = "black", fill=NA, size=0.5),
+        strip.background = element_rect(fill = "transparent"),
+        plot.background = element_rect(fill = "transparent"),
+        plot.title = element_text(hjust=0.5,face="plain"),
+        strip.text.x = element_blank(),
+        strip.text.y = element_text(size = 13),
+        legend.key = element_rect(colour = "transparent", fill = "transparent"),
+        legend.background = element_rect(fill = "transparent"),
+        legend.text = element_text(size = 12,face="plain"),
+        legend.position ="none",
+        legend.text.align = 0,
+        legend.key.height = unit(0.5,"line"),
+        legend.title = element_blank(),
+        legend.box = "vertical")
+DeltaDev <- plot_grid(onedub,twodub,ncol=1,rel_heights = c(0.96,1))
+return(DeltaDev)
+}
+
+# Make Errordistribution
+
+PredictionAgg <- bind_rows(readRDS(paste0("Prediction/prediction_sepSS_full_",experiment,"_agg.rds")),
+                         readRDS(paste0("Prediction/prediction_VP_fullLOSSO_",experiment,"_agg.rds"))) %>%
+                           filter(leftout == 0) %>%
+                           mutate(leftout = "Full data set fitted")%>%
+  filter(model %in% c("MK_RNminus","MK_RNplus","VPnosetsize","VPplusnosetsize")) %>%
+  mutate(model = factor(model,levels = c("MK_RNminus","MK_RNplus",
+                                         "VPnosetsize","VPplusnosetsize"
+  ))) %>%
+
+  mutate(setsize = factor(setsize,
+                          levels = expsetsize,
+                          labels =  setsizelabels))
+
+
+PredictionInd <-  bind_rows(readRDS(paste0("Prediction/prediction_sepSS_full_",experiment,"_ind.rds")),
+                         readRDS(paste0("Prediction/prediction_VP_fullLOSSO_",experiment,"_ind.rds"))) %>%
+                           filter(leftout == 0) %>%
+                           mutate(leftout = "Full data set fitted")%>%
+  filter(model %in% c("MK_RNminus","MK_RNplus","VPnosetsize","VPplusnosetsize")) %>%
+  mutate(model = factor(model,levels = c("MK_RNminus","MK_RNplus",
+                                         "VPnosetsize","VPplusnosetsize"
+  ))) %>%
+
+  mutate(setsize = factor(setsize,
+                          levels = expsetsize,
+                          labels =  setsizelabels))
+
+
+FRPredictionAvP <- PredictionInd %>%
+  
+   #mutate(model = factor(model,levels=models)) %>%
+  filter(id != "Av") %>%
+ # filter(!id %in% FailedSzPrediction) %>%
+  group_by(model,setsize,data) %>%
+  summarize(mprediction = mean(prediction)) %>%
+  rename("prediction" = mprediction) %>%
+  mutate(normprediction = prediction/sum(prediction)) %>%
+  mutate(id = "Averagepred") 
+
+
+maxheight <- max(PredictionAgg$prediction, PredictionInd %>% filter(id == "Av") %>% .$prediction,
+                 FRPredictionAvP$prediction) + 0.2
+
+load("Data/ol17_prepared.rda")
+load("Data/vdb14_prepared.rda")
+load("Data/pratte17_prepared.rda")
+
+experimentfile <- bind_rows(data_ol17[data_ol17$exp == "ol17_e1",],data_vdb14,data_pratte17)  %>% 
+  rename(setsize = "set_size") 
+
+expanded <- experimentfile %>% expand(exp,id,setsize) 
+empiricaldata <- experimentfile %>% right_join(expanded) %>% 
+  
+  mutate(setsize = factor(setsize,
+                          levels = expsetsize,
+                          labels =  setsizelabels))
+
+
+Errordistribution <- function(Data,Errordist,maxheight) {
+  
+  
+ ggplot(data = Data,
+                               aes(x = error_0)) +
+  geom_histogram(aes(y = ..density..),color="darkgrey",fill="#edeaea",bins=60,alpha=0.8) +
+  facet_wrap(.~setsize,ncol=2) +
+  scale_x_continuous(limits=c(-pi,pi),name = "Error (radian)",breaks = c(-pi,-pi/2,0,pi/2,pi),
+                     labels = c(expression(-pi),
+                                expression(-frac(pi,2)),
+                                0,
+                                expression(frac(pi,2)),
+                                expression(pi))) +
+  #coord_cartesian(xlim = c(-pi/2,pi/2))+
+  geom_line(data = Errordist,
+            
+            aes(x = data,y=prediction,linetype=model,color=model,group=model), size = 0.75) +
+  facet_wrap(setsize~.,ncol=4) +
+  
+  scale_linetype_manual(name = NULL,values = c("dashed","solid","dashed","solid"),
+                        labels = c(
+
+
+                          expression(paste("VP(",kappa,")A-, full data set fitted")),
+                          expression(paste("VP(",kappa,")A+, full data set fitted")),
+                          expression(paste("VP(",kappa,")A-, set sizes fitted separately")),
+                          expression(paste("VP(",kappa,")A+, set sizes fitted separately"))
+                        ), guide = guide_legend(ncol=2)) +
+  scale_color_manual(name=NULL,
+                     values =  c("#CC79A7","#CC79A7",
+                                 "#56B4E9","#56B4E9"),
+                     labels = c(
+
+
+                       expression(paste("VP(",kappa,")A-, full data set fitted")),
+                       expression(paste("VP(",kappa,")A+, full data set fitted")),
+                       expression(paste("VP(",kappa,")A-, set sizes fitted separately")),
+                       expression(paste("VP(",kappa,")A+, set sizes fitted separately"))
+
+                     )
+  )+
+  theme(axis.text.x = element_text(size=14),
+        plot.title = element_text(size = 14,hjust=0.5),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.x = element_text(size=14),
+        axis.title.y = element_blank(),
+        panel.background = element_rect(fill = "transparent"),
+        panel.border = element_rect(colour = "black", fill=NA, size=0.5),
+        strip.background.x = element_rect(fill = "transparent"),
+        strip.background.y = element_rect(fill = "#edeaea",color="black"),
+        plot.background = element_rect(fill = "transparent"),
+        strip.text = element_text(size = 14),
+        legend.key = element_rect(colour = "transparent", fill = "white"),
+        legend.background = element_rect(fill = "transparent"),
+        legend.position = c(0.8,0.17),
+        legend.title = element_blank(),
+        legend.key.width = unit(3,"line"))
+}
+
+# Make summary statistics
+
+
+CVind <- bind_rows(readRDS(paste0("IndividualGraphs/SummaryStat/SumStat_sepSS_",experiment,"_ind.rds")),
+readRDS(paste0("IndividualGraphs/SummaryStat/SumStatLOSSO_",experiment,"_ind.rds")) %>% 
+  filter(leftout == 0) %>% 
+  filter(model %in% c("MK_RNminus","MK_RNplus"))) %>% 
+  mutate(model = factor(model,levels = c("Data","MK_RNminus","MK_RNplus",
+                                         "VPnosetsize","VPplusnosetsize")))
+CVagg <- bind_rows(readRDS(paste0("IndividualGraphs/SummaryStat/SumStat_sepSS_",experiment,"_agg.rds")),
+readRDS(paste0("IndividualGraphs/SummaryStat/SumStatLOSSO_",experiment,"_agg.rds")) %>% 
+  filter(leftout == 0) %>% 
+  filter(model %in% c("MK_RNminus","MK_RNplus"))) %>% 
+  mutate(model = factor(model,levels = c("Data","MK_RNminus","MK_RNplus",
+                                         "VPnosetsize","VPplusnosetsize")))
+
+CVaver <- bind_rows(readRDS(paste0("IndividualGraphs/SummaryStat/SumStat_sepSS_",experiment,"_averagepred.rds")),
+readRDS(paste0("IndividualGraphs/SummaryStat/SumStatLOSSO",experiment,"_averagepred.rds")) %>% 
+  filter(leftout == 0) %>% 
+  filter(model %in% c("MK_RNminus","MK_RNplus"))) %>% 
+  mutate(model = factor(model,levels = c("Data","MK_RNminus","MK_RNplus",
+                                         "VPnosetsize","VPplusnosetsize")))
+
+
+
+CVind_averageSumStat <- CVind %>% group_by(exp,setsize,model) %>% select(-id) %>% 
+  summarise_at(vars(-group_cols()), mean)
+
+
+
+SumStatPlot <- function(Vars1data){
+  
+ 
+CVplot <- Vars1data %>% select(-leftout) %>% 
+  pivot_longer(!c(exp,id,model,setsize),names_to = "measure",values_to="value") %>% 
+  mutate(measure = factor(measure, levels = c("Var","meanErr","kurt"),
+                          labels = c(expression(paste("circular ",sigma^2)),
+                                     expression(paste("mean abs. deviation (radian)")),
+                                     expression(paste("kurtosis")))))
+
+
+
+
+ggplot(CVplot %>% filter(model == "Data"), aes(x = setsize, y = value)) +
+  geom_hpline(aes(linetype = model),size=1.5,width=1) +
+  geom_point(data = CVplot %>% filter(model != "Data") ,
+             aes(x = setsize, y = value,shape = model, fill = model),
+             position = position_dodge(0.6),size=3.5,alpha=0.7,color="black") +
+  scale_x_continuous(labels=c(1:8),breaks = c(1:8),name="Set size") +
+  facet_grid(.~measure,scales="free_y",labeller=label_parsed) + 
+  scale_y_continuous(name = "Summary Statistic",limits = c(0,1.75),breaks = seq(0,1.75,0.25))+
+   scale_shape_manual(values = rep(c(21,22),2),
+                     labels = c(
+                       expression(paste("VP(",kappa,")A-, full data set fitted")),
+                       expression(paste("VP(",kappa,")A+, full data set fitted")),
+                       expression(paste("VP(",kappa,")A-, set sizes fitted separately")),
+                       expression(paste("VP(",kappa,")A+, set sizes fitted separately"))
+
+                     )
+  ) +
+
+  scale_fill_manual(values =  c("#f1dae7","#CC79A7", "#afd8f0","#56B4E9"),
+                    labels = c(
+                      expression(paste("VP(",kappa,")A-, full data set fitted")),
+                      expression(paste("VP(",kappa,")A+, full data set fitted")),
+                      expression(paste("VP(",kappa,")A-, set sizes fitted separately")),
+                      expression(paste("VP(",kappa,")A+, set sizes fitted separately")))) +
+  theme(axis.text = element_text(size=11),
+        axis.title.y = element_blank(),
+        axis.title.x = element_text(size=12),
+        plot.title = element_text(size = 18,hjust=0.5),
+        panel.background = element_rect(fill = "transparent"),
+        panel.border = element_rect(colour = "black", fill=NA, size=0.5),
+        strip.background = element_rect(fill = "transparent"),
+        plot.background = element_rect(fill = "transparent"),
+        strip.text = element_text(size = 14),
+        legend.key = element_rect(colour = "transparent", fill = "white"),
+        legend.background = element_rect(fill = "transparent"),
+        legend.text = element_text(size = 12,face="plain"),
+        #legend.position = c(0.1,0.7),
+        legend.text.align = 0,
+        legend.key.height = unit(0.5,"line"),
+        legend.title = element_blank(),
+        legend.box = "vertical")
+
+}
+
+```
+
+### Experiment-level data {.tabset}
+
+#### Aggregate Fits
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE}
+
+Deviance <- MakeDevPlot(SSfitsAgg,Agg=T)
+
+ErrorDist <- Errordistribution(empiricaldata %>% filter(exp == experiment),
+                               PredictionAgg,maxheight)
+
+
+CVAgg <- CVagg %>% 
+  mutate_if(is.factor,as.character) %>% 
+  bind_rows(expandedAgg2) %>% 
+  filter(model %in% c("Data",models)) %>% 
+  mutate_if(is.character,as.factor)
+
+
+SumStat <- SumStatPlot(CVAgg)
+
+```
+
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=8}
+
+plot(Deviance)
+
+```
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=10}
+
+plot(ErrorDist)
+
+```
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=5}
+
+plot(SumStat)
+
+```
+
+#### Averaging individual paramater estimates
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE}
+
+Deviance <- MakeDevPlot(SSfitsAV,Agg=F)
+
+ErrorDist <- Errordistribution(empiricaldata %>% filter(exp == experiment),
+                               PredictionInd %>% filter(id == "Av"),maxheight)
+
+
+
+aggData <- CVAgg %>% filter(model == "Data") %>% mutate(id = "Av")
+  
+CVAv <- CVind %>% 
+  bind_rows(aggData) %>% 
+  mutate_if(is.factor,as.character) %>% 
+  bind_rows(expandedInd2) %>% 
+  filter(model %in% c("Data",models)) %>% 
+  
+  filter(id == "Av") %>% 
+  mutate_if(is.character,as.factor)
+
+
+SumStat <- SumStatPlot(CVAv)
+
+```
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=8}
+
+plot(Deviance)
+
+```
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=10}
+
+plot(ErrorDist)
+
+```
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=5}
+
+plot(SumStat)
+
+```
+
+#### Averaging individual predictions
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE}
+
+
+ErrorDist <- Errordistribution(empiricaldata %>% filter(exp == experiment),
+                               FRPredictionAvP,maxheight)
+
+
+CVAver <- CVaver %>% 
+  mutate_if(is.factor,as.character) %>% 
+  bind_rows(expandedAgg2) %>% 
+  filter(model %in% c("Data",models)) %>% 
+  mutate(id = "Averagepred") %>% 
+  mutate_if(is.character,as.factor) 
+
+
+SumStat <- SumStatPlot(CVAver)
+
+CircVarsInds <- CVind_averageSumStat %>% mutate(id = "Agg") %>% 
+  ungroup() %>% 
+  mutate_if(is.factor,as.character) %>%
+  bind_rows(expandedAgg2) %>%
+  ungroup() %>% 
+  filter(model %in% c("Data",models)) %>%
+  mutate_if(is.character,as.factor) 
+
+
+SumStat2 <- SumStatPlot(CircVarsInds)
+
+```
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=8}
+
+plot(Deviance)
+
+```
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=10}
+
+plot(ErrorDist)
+
+```
+
+A. Based on the summary statistic derived from averaged error distributions. 
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=5}
+
+plot_grid(SumStat,labels="A")
+
+```
+B. Based on summary statistics averaged across participants (derived from individual best-fit predictions of the error distribution)
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=5}
+
+plot_grid(SumStat,labels="B")
+
+```
+
+### Individual-level data {.tabset}
+
+
+```{r,echo=FALSE, message =FALSE, warning = FALSE}
+
+
+Devs_list <- NULL
+
+for (i in seq_along(participants)){
+  
+  
+  AIC <- MakeDevPlot(SSfitsInd %>% filter(id == participants[[i]]),Agg=F) 
+
+  ErrorDist <- Errordistribution(empiricaldata %>% filter(id == participants[[i]]),
+                               PredictionInd %>% filter(id == participants[[i]]),
+                               maxheight = max(PredictionInd$prediction)+0.2)
+  
+  SummaryStats <- SumStatPlot(CVind %>% filter(id == participants[[i]]))
+  
+  Devs_list[[i]] <- plot_grid(AIC, ErrorDist,SummaryStats,rel_heights = c(1.5,2.5,2),ncol=1)
+  
+}
+
+```
+
+
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE,results="asis",fig.width = 13,fig.height=15}
+
+for(i in seq_along(participants)){
+  
+  cat("  \n####",participants[[i]])
+  cat("  \n")
+  
+  plot(Devs_list[[i]])
+  
+  cat("  \n")
+}
+```
