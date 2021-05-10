@@ -21,7 +21,7 @@ VP(&kappa;)P+ | MK_P_RNplus
 VP(&kappa;)U- | MK_U_RNminus
 VP(&kappa;)U+ | MK_U_RNplus
 
-Additionally, we fitted the VP(&kappa;)A&plusmn; model separately to all set sizes, with &kappa;, &tau; and &kappa;<sub>r</sub (where applicable) were estimated separately for all set sizes and $\alpha$ was ommitted. In the manuscript, these models are identified as **VP, set sizes fitted separately**. In the fitting and prediction files, these models are identified as **VPnosetsize** and **VPplusnosetsize** for the model without and with response noise respectively.
+Additionally, we fitted the VP(&kappa;)A&plusmn; model separately to all set sizes, with &kappa;, &tau; and &kappa;<sub>r</sub> (where applicable) were estimated separately for all set sizes and $\alpha$ was ommitted. In the manuscript, these models are identified as **VP, set sizes fitted separately**. In the fitting and prediction files, these models are identified as **VPnosetsize** and **VPplusnosetsize** for the model without and with response noise respectively.
 
 # Data
 
@@ -157,7 +157,7 @@ We ran model/parameter recovery for a limited set of generating parameters. We u
 
 ### Generating data sets
 
-In contrast to the predictions of the error distributions which we generated using vwmvp::predict_data(), we generated data sets here using vwmvp::generate_data(). As we show in **vwmvp_predictvsgenerate.R**, given a suitably large sample size (e.g., number of trials), both methods are approximately equivalent. When we initially generated the data sets for recovery, vwmvp::generate_data() and vwmvp::predict_data() both defined the U-capacity limit to run from 0 - $K$ with a mean of $K$/2. In the current version, vwmvp::generate_data() defines it with 0 - 2$K$ with a mean of $K$ (hence the need to adjust the input-$K$ by multiplying it by 2 to generate equivalent predictions in **vwmvp_predictvsgenerate.R**).
+In contrast to the predictions of the error distributions which we generated using vwmvp::predict_data(), we generated data sets here using vwmvp::generate_data(). As we show in **vwmvp_predictvsgenerate.R**, given a suitably large sample size (e.g., number of trials), both methods are approximately equivalent. When we initially generated the data sets for recovery, vwmvp::generate_data() and vwmvp::predict_data() both defined the U-capacity limit to run from 0 - K with a mean of K/2. In the current version, vwmvp::generate_data() defines it with 0 - 2K with a mean of K (hence the need to adjust the input-K by multiplying it by 2 to generate equivalent predictions in **vwmvp_predictvsgenerate.R**).
 
 The generation of data sets is shown in **Recovery_generateparameters.R**. Detailed explanation for adjusting/determining the values is given in the supplemental material. The data sets are stored in **RecoveryData/** where **median** refers to data sets with median parameter estimates for generating values, and **rmv** referes to samples from a multivariate normal for generating values. The number in the file name refers to the number of trials per set size that were generated.
 
