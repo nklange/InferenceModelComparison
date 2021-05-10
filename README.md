@@ -12,16 +12,16 @@ Manuscript  | Analysis
 ------------- | ------------- 
 VP(J)A-    | J_RNminus      
 VP(J)A+        | J_RNplus
-VP($\kappa$)A- | MK_RNminus
-VP($\kappa$)A+ | MK_RNplus
-VP($\kappa$)F- | MK_FM_RNminus
-VP($\kappa$)F+ | MK_FM_RNplus
-VP($\kappa$)P- | MK_P_RNminus
-VP($\kappa$)P+ | MK_P_RNplus
-VP($\kappa$)U- | MK_U_RNminus
-VP($\kappa$)U+ | MK_U_RNplus
+VP(&kappa;)A- | MK_RNminus
+VP(&kappa;)A+ | MK_RNplus
+VP(&kappa;)F- | MK_FM_RNminus
+VP(&kappa;)F+ | MK_FM_RNplus
+VP(&kappa;)P- | MK_P_RNminus
+VP(&kappa;)P+ | MK_P_RNplus
+VP(&kappa;)U- | MK_U_RNminus
+VP(&kappa;)U+ | MK_U_RNplus
 
-Additionally, we fitted the VP($\kappa$)A$\pm$ model separately to all set sizes, with $\kappa$, $\tau$ and $\kappa_r$ (where applicable) were estimated separately for all set sizes and $\alpha$ was ommitted. In the manuscript, these models are identified as **VP, set sizes fitted separately**. In the fitting and prediction files, these models are identified as **VPnosetsize** and **VPplusnosetsize** for the model without and with response noise respectively.
+Additionally, we fitted the VP(&kappa;)A&plusmn; model separately to all set sizes, with &kappa;, &tau; and &kappa;<sub>r</sub (where applicable) were estimated separately for all set sizes and $\alpha$ was ommitted. In the manuscript, these models are identified as **VP, set sizes fitted separately**. In the fitting and prediction files, these models are identified as **VPnosetsize** and **VPplusnosetsize** for the model without and with response noise respectively.
 
 # Data
 
@@ -78,8 +78,8 @@ All individual and aggregate level fits (all runs for each model and data set) a
 * **FitFull_sepSS.rds**: VPnosetsize and VPplusnosetsize
 * **FitFull_simSS.rds**: negative log likelihood for individual set sizes on the basis of the best fit parameters in **FitFull.rds**
 
-* **GA_FitFull.rds**: Simulation approach in fitting VP models, with GA, for VP(J)A-, VP(J)A+, VP($\kappa$)A- and VP($\kappa$)A+
-* **GAnlminb_FitFull.rds**: Simulation + numerical integration for VP(J)A-, VP(J)A+, VP($\kappa$)A- and VP($\kappa$)A+
+* **GA_FitFull.rds**: Simulation approach in fitting VP models, with GA, for VP(J)A-, VP(J)A+, VP(&kappa;)A- and VP(&kappa;)A+
+* **GAnlminb_FitFull.rds**: Simulation + numerical integration for VP(J)A-, VP(J)A+, VP(&kappa;)A- and VP(&kappa;)A+
 
 ### Experiment-level (aggregated data) fits
 
@@ -114,7 +114,7 @@ prediction_VP_fullLOSSO_[experiment]_ind.rds | VP | Individual, id = "Av" | Full
 prediction_nonVP_full_[experiment]_ind.rds | non-VP models | Individual, id = "Av" | Full data set
 prediction_idavExclFailed_[experiment]_ind.rds | VP models in RQ2 (no Fisher information) | id = "AvExcl" | Full data set, LOSSO
 prediction_sepSS_full_[experiment]_ind.rds       | VPnosetsize,VPplusnosetsize | Individual, id="Av" | Full data set
-prediction_VP_fullLOSSO_[experiment]_agg.rds | VP | Individual, id = "Av" | Full data set, LOSSO for VP($\kappa$) models
+prediction_VP_fullLOSSO_[experiment]_agg.rds | VP | Individual, id = "Av" | Full data set, LOSSO for VP(&kappa;) models
 prediction_nonVP_full_[experiment]_agg.rds | non-VP models | Individual, id = "Av" | Full data set
 prediction_sepSS_full_[experiment]_agg.rds       | VPnosetsize,VPplusnosetsize | Aggregate | Full data set
 
@@ -149,7 +149,7 @@ Figure 7: Shen \& Ma (2019) Factorial Importance Metrics RQ2 |  **RNCapacity_gra
 Figure 8: Shen \& Ma (2019) Factorial Importance Metrics RQ2 as interaction |  **NonVP_graph.R**
 Figure 9: Alternate VP variants for limited capacity | **Compare_modelvariants.R**
 
-(*) Note: in vwmvp, the uniform capacity limit is defined as running from 0 - K (rather than 0 - 2K, as defined in the manuscript). Parameter estimates of $K$ in VP($\kappa$)U$\pm$ models in fitting files therefore were divided by 2 to reflect the the mean $K$ rather than the max($K$). 
+(*) Note: in vwmvp, the uniform capacity limit is defined as running from 0 - K (rather than 0 - 2K, as defined in the manuscript). Parameter estimates of K in VP(&kappa;)&plusmn; models in fitting files therefore were divided by 2 to reflect the the mean K rather than the max(K). 
 
 ## Parameter and model recovery
 
@@ -188,7 +188,7 @@ SumStat_[experiment]_averagepred.rds | VP | summary statistics based on averagin
 with predictions based on extreme out-of-sample LOSSO-CV removed | Full data set, LOSSO
 SumStatLOSSO_[experiment]_idAvExcl.rds | VP | id = "AvExcl" | Full data set, LOSSO
 
-(*) The 'full data set' is exchangeable in both files. Small numerical differences due to simulation noise but based on the same data. In the LOSSO files, VP($J$)A$\pm$ models are missing as we do not show the LOSSO-CV predictions of those models at any point and it was not relevant to include them, though simulating the predictions would be trivial.
+(*) The 'full data set' is exchangeable in both files. Small numerical differences due to simulation noise but based on the same data. In the LOSSO files, VP(J)A&plusmn; models are missing as we do not show the LOSSO-CV predictions of those models at any point and it was not relevant to include them, though simulating the predictions would be trivial.
 
 
 
